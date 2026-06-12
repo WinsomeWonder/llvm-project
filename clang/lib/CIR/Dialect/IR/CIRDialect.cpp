@@ -179,22 +179,28 @@ static LogicalResult verifyOpenCLVersionAttr(Operation *op,
   return success();
 }
 
+static LogicalResult verifyRegionAttributePlacement(Operation *op,
+                                                    NamedAttribute attr) {
+  StringRef name = attr.getName().getValue();
+  if (isOpenCLVersionAttrName(name))
+    return verifyOpenCLVersionAttrPlacement(op, attr);
+  if (name == CIRDialect::getOpenCLKernelExecutionMetadataAttrName())
+    return op->emitError()
+           << name
+           << " attribute cannot be attached to a function argument or result";
+  return success();
+}
+
 LogicalResult cir::CIRDialect::verifyRegionArgAttribute(
     Operation *op, unsigned /*regionIndex*/, unsigned /*argIndex*/,
     NamedAttribute attr) {
-  if (!isOpenCLVersionAttrName(attr.getName().getValue()))
-    return success();
-
-  return verifyOpenCLVersionAttrPlacement(op, attr);
+  return verifyRegionAttributePlacement(op, attr);
 }
 
 LogicalResult cir::CIRDialect::verifyRegionResultAttribute(
     Operation *op, unsigned /*regionIndex*/, unsigned /*resultIndex*/,
     NamedAttribute attr) {
-  if (!isOpenCLVersionAttrName(attr.getName().getValue()))
-    return success();
-
-  return verifyOpenCLVersionAttrPlacement(op, attr);
+  return verifyRegionAttributePlacement(op, attr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -259,6 +265,17 @@ LogicalResult
 cir::CIRDialect::verifyOperationAttribute(mlir::Operation *op,
                                           mlir::NamedAttribute attr) {
   llvm::StringRef attrName = attr.getName().getValue();
+  if (attrName == getOpenCLKernelExecutionMetadataAttrName()) {
+    if (!mlir::isa<cir::FuncOp>(op))
+      return op->emitError()
+             << attrName << " attribute must be attached to a function";
+    if (!mlir::isa<cir::OpenCLKernelExecutionMetadataAttr>(attr.getValue()))
+      return op->emitError()
+             << "expected " << attrName
+             << " to be a #cir.cl.kernel_execution_metadata attribute";
+    return success();
+  }
+
   if (isOpenCLVersionAttrName(attrName))
     return verifyOpenCLVersionAttr(op, attr);
 
