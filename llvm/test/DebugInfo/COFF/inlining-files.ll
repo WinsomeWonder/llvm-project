@@ -16,6 +16,19 @@
 ; ++x;
 ; ++x;
 
+; The inlinee's line table switches to t.inc, so the inlinee lines record must
+; list it as an extra file. Readers such as DIA reject the inline site otherwise.
+; OBJ:      SubSectionType: InlineeLines (0xF6)
+; OBJ:      InlineeSourceLine {
+; OBJ-NEXT:   Inlinee: file_change (0x1002)
+; OBJ-NEXT:   FileID: D:\src\llvm\build\t.cpp (0x0)
+; OBJ-NEXT:   SourceLineNum: 2
+; OBJ-NEXT:   ExtraFileCount: 1
+; OBJ-NEXT:   ExtraFiles [
+; OBJ-NEXT:     FileID: D:\src\llvm\build\t.inc (0x8)
+; OBJ-NEXT:   ]
+; OBJ-NEXT: }
+
 ; OBJ:  Subsection [
 ; OBJ:    SubSectionType: Symbols (0xF1)
 ; OBJ:    {{.*}}Proc{{.*}}Sym {

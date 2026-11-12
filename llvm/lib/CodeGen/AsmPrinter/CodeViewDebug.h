@@ -296,6 +296,10 @@ private:
   /// All inlined subprograms in the order they should be emitted.
   SmallSetVector<const DISubprogram *, 4> InlinedSubprograms;
 
+  /// For each inlined subprogram, the .cv_file ids of files other than the
+  /// subprogram's own file that its inlined line tables switch to.
+  DenseMap<const DISubprogram *, SmallSetVector<unsigned, 1>> InlineeExtraFiles;
+
   /// Map from a pair of DI metadata nodes and its DI type (or scope) that can
   /// be nullptr, to CodeView type indices. Primarily indexed by
   /// {DIType*, DIType*} and {DISubprogram*, DIType*}.

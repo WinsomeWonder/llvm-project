@@ -246,15 +246,25 @@ CodeViewDebug::getInlineSite(const DILocation *InlinedAt,
   InlineSite *Site = &SiteInsertion.first->second;
   if (SiteInsertion.second) {
     unsigned ParentFuncId = CurFn->FuncId;
-    if (const DILocation *OuterIA = InlinedAt->getInlinedAt())
-      ParentFuncId =
-          getInlineSite(OuterIA, InlinedAt->getScope()->getSubprogram())
-              .SiteFuncId;
+    const DISubprogram *ParentInlinee = nullptr;
+    if (const DILocation *OuterIA = InlinedAt->getInlinedAt()) {
+      InlineSite &Parent =
+          getInlineSite(OuterIA, InlinedAt->getScope()->getSubprogram());
+      ParentFuncId = Parent.SiteFuncId;
+      ParentInlinee = Parent.Inlinee;
+    }
 
     Site->SiteFuncId = NextFuncId++;
-    OS.emitCVInlineSiteIdDirective(
-        Site->SiteFuncId, ParentFuncId, maybeRecordFile(InlinedAt->getFile()),
-        InlinedAt->getLine(), InlinedAt->getColumn(), SMLoc());
+    unsigned CallSiteFileId = maybeRecordFile(InlinedAt->getFile());
+    OS.emitCVInlineSiteIdDirective(Site->SiteFuncId, ParentFuncId,
+                                   CallSiteFileId, InlinedAt->getLine(),
+                                   InlinedAt->getColumn(), SMLoc());
+
+    // The enclosing inlinee's line table switches to the call site's file for
+    // the extent of this site.
+    if (ParentInlinee &&
+        CallSiteFileId != maybeRecordFile(ParentInlinee->getFile()))
+      InlineeExtraFiles[ParentInlinee].insert(CallSiteFileId);
     Site->Inlinee = Inlinee;
     InlinedSubprograms.insert(Inlinee);
     auto InlineeIdx = getFuncIdForSubprogram(Inlinee);
@@ -548,8 +558,15 @@ void CodeViewDebug::maybeRecordLocation(const DebugLoc &DL,
 
     // If this location was actually inlined from somewhere else, give it the ID
     // of the inline call site.
-    FuncId =
-        getInlineSite(SiteLoc, Loc->getScope()->getSubprogram()).SiteFuncId;
+    const DISubprogram *Inlinee = Loc->getScope()->getSubprogram();
+    InlineSite &LocSite = getInlineSite(SiteLoc, Inlinee);
+    FuncId = LocSite.SiteFuncId;
+
+    // An inline site's line table starts in the inlinee's own file. Remember
+    // any other file it switches to so it can be listed as an extra file. Use
+    // the site's inlinee, which can differ from this location's subprogram.
+    if (FileId != maybeRecordFile(LocSite.Inlinee->getFile()))
+      InlineeExtraFiles[LocSite.Inlinee].insert(FileId);
 
     // Ensure we have links in the tree of inline call sites.
     bool FirstLoc = true;
@@ -1012,8 +1029,28 @@ void CodeViewDebug::emitInlineeLinesSubsection() {
   // determine if a pdb matches the source before loading it.  Visual Studio,
   // for instance, will display a warning that the breakpoints are not valid if
   // the pdb does not match the source.
+  //
+  // The extra files signature is only needed when an inlinee's line table
+  // switches files. Debug readers such as DIA reject inline sites whose
+  // annotations change files that the inlinee lines record does not list.
+  bool HasExtraFiles = !InlineeExtraFiles.empty();
   OS.AddComment("Inlinee lines signature");
-  OS.emitInt32(unsigned(InlineeLinesSignature::Normal));
+  OS.emitInt32(unsigned(HasExtraFiles ? InlineeLinesSignature::ExtraFiles
+                                      : InlineeLinesSignature::Normal));
+
+  // Distinct subprograms (e.g. a declaration and its definition) can share one
+  // function id type index, and readers may resolve any of the records, so each
+  // record lists the extra files of every subprogram sharing its index.
+  DenseMap<unsigned, SmallSetVector<unsigned, 1>> ExtraFilesByType;
+  if (HasExtraFiles) {
+    for (const DISubprogram *SP : InlinedSubprograms) {
+      auto It = InlineeExtraFiles.find(SP);
+      if (It == InlineeExtraFiles.end())
+        continue;
+      auto &Set = ExtraFilesByType[TypeIndices[{SP, nullptr}].getIndex()];
+      Set.insert(It->second.begin(), It->second.end());
+    }
+  }
 
   for (const DISubprogram *SP : InlinedSubprograms) {
     assert(TypeIndices.count({SP, nullptr}));
@@ -1030,6 +1067,19 @@ void CodeViewDebug::emitInlineeLinesSubsection() {
     OS.emitCVFileChecksumOffsetDirective(FileId);
     OS.AddComment("Starting line number");
     OS.emitInt32(SP->getLine());
+
+    if (HasExtraFiles) {
+      auto It = ExtraFilesByType.find(InlineeIdx.getIndex());
+      ArrayRef<unsigned> Extra;
+      if (It != ExtraFilesByType.end())
+        Extra = It->second.getArrayRef();
+      OS.AddComment("Extra file count");
+      OS.emitInt32(Extra.size());
+      for (unsigned ExtraFileId : Extra) {
+        OS.AddComment("Extra file checksum offset");
+        OS.emitCVFileChecksumOffsetDirective(ExtraFileId);
+      }
+    }
   }
 
   endCVSubsection(InlineEnd);
