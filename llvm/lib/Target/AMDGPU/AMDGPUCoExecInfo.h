@@ -52,6 +52,8 @@ enum class CoExecMask : uint16_t {
   VMEM = 1 << 5,  // Global memory
   SMEM = 1 << 6,  // Scalar memory
   WMMA = 1 << 7,  // Next WMMA (V stages only), or MFMA
+  // V_PK*_{F32,B32} on gfx942/gfx950
+  PK_F32 = 1 << 8,
   All = 0xFFFF,
 
   MEM = DS | VMEM | SMEM,
@@ -82,6 +84,7 @@ enum class InstructionFlavor : uint8_t {
   SingleCycleVALU, // Single-cycle VALU (not TRANS, not multi-cycle CVT)
   TRANS,           // Transcendental ops (v_exp, v_log, etc.)
   MultiCycleVALU,  // VALU instructions with repeat rate > 1
+  PackedF32VALU,   // V_PK*_{F32,B32} on gfx942/gfx950
   VMEM,            // FLAT/GLOBAL memory operations
   SMEM,            // Scalar memory operations
   DS,              // LDS/GDS operations
@@ -102,6 +105,8 @@ inline StringRef getFlavorName(InstructionFlavor F) {
     return "TRANS";
   case InstructionFlavor::MultiCycleVALU:
     return "VALU(Nc)";
+  case InstructionFlavor::PackedF32VALU:
+    return "VALU(PK_F32)";
   case InstructionFlavor::VMEM:
     return "VMEM";
   case InstructionFlavor::SMEM:
@@ -134,6 +139,8 @@ inline CoExecMaskT getCoExecMask(InstructionFlavor F) {
     return CoExecMask::WMMA;
   case InstructionFlavor::TRANS:
     return CoExecMask::TRANS;
+  case InstructionFlavor::PackedF32VALU:
+    return CoExecMask::PK_F32;
   case InstructionFlavor::SingleCycleVALU:
   case InstructionFlavor::MultiCycleVALU:
   // LDS DMA and tensor DMA issue on the VALU pipe.
@@ -212,6 +219,8 @@ inline const char *getCoExecMaskName(CoExecMaskT Mask) {
     return "SMEM";
   case CoExecMask::WMMA:
     return "WMMA";
+  case CoExecMask::PK_F32:
+    return "PK_F32";
   default:
     llvm_unreachable("Not a single instruction class");
   }
